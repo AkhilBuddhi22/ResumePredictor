@@ -1,75 +1,65 @@
 import streamlit as st
-import pickle
-import re
 import PyPDF2
-from docx import Document
+import pandas as pd
+import spacy
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import os
 
-svc_model = pickle.load(open('clf.pkl', 'rb'))
-tfidf = pickle.load(open('tfidf.pkl', 'rb'))
-le = pickle.load(open('encoder.pkl', 'rb'))
+# Load NLP model
+nlp = spacy.load("en_core_web_sm")
 
-def cleanResume(txt):
-    cleanText = re.sub('http\S+\s', ' ', txt)
-    cleanText = re.sub('RT|cc', ' ', cleanText)
-    cleanText = re.sub('#\S+\s', ' ', cleanText)
-    cleanText = re.sub('@\S+', '  ', cleanText)
-    cleanText = re.sub('[%s]' % re.escape("""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"""), ' ', cleanText)
-    cleanText = re.sub(r'[^\x00-\x7f]', ' ', cleanText)
-    cleanText = re.sub('\s+', ' ', cleanText)
-    return cleanText
-
-
-def extract_text_from_pdf(file):
-    pdf_reader = PyPDF2.PdfReader(file)
-    text = ''
+# Function to extract text from PDF
+def extract_text_from_pdf(uploaded_file):
+    text = ""
+    pdf_reader = PyPDF2.PdfReader(uploaded_file)
     for page in pdf_reader.pages:
-        text += page.extract_text() or ''
+        text += page.extract_text() + " "
     return text
 
-def extract_text_from_docx(file):
-    doc = Document(file)
-    return '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+# Function to extract skills from text
+def extract_skills(text):
+    doc = nlp(text)
+    skills = [token.text for token in doc.ents if token.label_ in ["ORG", "PRODUCT", "PERSON"]]
+    return list(set(skills))
 
-def extract_text_from_txt(file):
-    try:
-        text = file.read().decode('utf-8')
-    except UnicodeDecodeError:
-        text = file.read().decode('latin-1')
-    return text
+# Function to calculate similarity
+def calculate_similarity(resume_texts, job_description):
+    vectorizer = TfidfVectorizer()
+    corpus = resume_texts + [job_description]
+    tfidf_matrix = vectorizer.fit_transform(corpus)
+    similarity_scores = cosine_similarity(tfidf_matrix[:-1], tfidf_matrix[-1])
+    return similarity_scores.flatten()
 
-def handle_file_upload(uploaded_file):
-    file_extension = uploaded_file.name.split('.')[-1].lower()
-    if file_extension == 'pdf':
-        return extract_text_from_pdf(uploaded_file)
-    elif file_extension == 'docx':
-        return extract_text_from_docx(uploaded_file)
-    elif file_extension == 'txt':
-        return extract_text_from_txt(uploaded_file)
+# Streamlit UI
+st.title("AI Resume Screening App")
+
+# Job Description Input
+job_description = st.text_area("Paste the Job Description:")
+
+# Resume Upload
+uploaded_files = st.file_uploader("Upload Resumes (PDF)", type=["pdf"], accept_multiple_files=True)
+
+if st.button("Screen Resumes"):
+    if not uploaded_files or not job_description:
+        st.warning("Please upload resumes and provide a job description.")
     else:
-        raise ValueError("Unsupported file type. Please upload a PDF, DOCX, or TXT file.")
-
-def pred(input_resume):
-    cleaned_text = cleanResume(input_resume)
-    vectorized_text = tfidf.transform([cleaned_text]).toarray()
-    predicted_category = svc_model.predict(vectorized_text)
-    return le.inverse_transform(predicted_category)[0]
-
-def main():
-    st.set_page_config(page_title="Resume Category Prediction", page_icon="📄", layout="wide")
-    st.title("Resume Category Prediction App")
-    st.markdown("Upload a resume in PDF, TXT, or DOCX format and get the predicted job category.")
-    uploaded_file = st.file_uploader("Upload a Resume", type=["pdf", "docx", "txt"])
-    if uploaded_file is not None:
-        try:
-            resume_text = handle_file_upload(uploaded_file)
-            st.write("Successfully extracted the text from the uploaded resume.")
-            if st.checkbox("Show extracted text", False):
-                st.text_area("Extracted Resume Text", resume_text, height=300)
-            st.subheader("Predicted Category")
-            category = pred(resume_text)
-            st.write(f"The predicted category of the uploaded resume is: **{category}**")
-        except Exception as e:
-            st.error(f"Error processing the file: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+        resume_texts = []
+        resume_data = []
+        
+        for uploaded_file in uploaded_files:
+            resume_text = extract_text_from_pdf(uploaded_file)
+            skills = extract_skills(resume_text)
+            resume_texts.append(resume_text)
+            resume_data.append({"Name": uploaded_file.name, "Skills": ", ".join(skills), "Text": resume_text})
+        
+        # Compute similarity scores
+        scores = calculate_similarity(resume_texts, job_description)
+        
+        # Display results
+        results = pd.DataFrame(resume_data)
+        results["Relevance Score"] = scores
+        results = results.sort_values(by="Relevance Score", ascending=False)
+        
+        st.subheader("Screening Results")
+        st.dataframe(results[["Name", "Skills", "Relevance Score"]])
