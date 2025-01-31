@@ -13,10 +13,11 @@ def cleanResume(txt):
     cleanText = re.sub('RT|cc', ' ', cleanText)
     cleanText = re.sub('#\S+\s', ' ', cleanText)
     cleanText = re.sub('@\S+', '  ', cleanText)
-    cleanText = re.sub('[%s]' % re.escape(""!#$%&'()*+,-./:;<=>?@[\\]^_`{|}~""), ' ', cleanText)
+    cleanText = re.sub('[%s]' % re.escape("""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"""), ' ', cleanText)
     cleanText = re.sub(r'[^\x00-\x7f]', ' ', cleanText)
     cleanText = re.sub('\s+', ' ', cleanText)
     return cleanText
+
 
 def extract_text_from_pdf(file):
     pdf_reader = PyPDF2.PdfReader(file)
